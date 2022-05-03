@@ -1,313 +1,321 @@
-# provider "aws" {
-#   region = local.region
-# }
+provider "aws" {
+  region = local.region
+}
 
-# provider "kubernetes" {
-#   host                   = module.eks.cluster_endpoint
-#   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+provider "kubernetes" {
+  host                   = module.eks.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
 
-#   exec {
-#     api_version = "client.authentication.k8s.io/v1alpha1"
-#     command     = "aws"
-#     # This requires the awscli to be installed locally where Terraform is executed
-#     args = ["eks", "get-token", "--cluster-name", module.eks.cluster_id]
-#   }
-# }
+  exec {
+    api_version = "client.authentication.k8s.io/v1alpha1"
+    command     = "aws"
+    # This requires the awscli to be installed locally where Terraform is executed
+    args = ["eks", "get-token", "--cluster-name", module.eks.cluster_id]
+  }
+}
 
-# locals {
-#   name            = "migrate"
-#   cluster_version = "1.21"
-#   region          = "us-east-1"
-# }
+locals {
+  name            = "migrate"
+  cluster_version = "1.21"
+  region          = "us-east-1"
+}
 
-# ################################################################################
-# # EKS Module
-# ################################################################################
+################################################################################
+# EKS Module
+################################################################################
 
-# module "eks" {
-#   source  = "terraform-aws-modules/eks/aws"
-#   version = "18.20.5"
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "18.20.5"
 
-#   cluster_name    = local.name
-#   cluster_version = local.cluster_version
+  cluster_name    = local.name
+  cluster_version = local.cluster_version
 
-#   vpc_id     = module.vpc.vpc_id
-#   subnet_ids = [module.vpc.private_subnets[0], module.vpc.public_subnets[1]]
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = [module.vpc.private_subnets[0], module.vpc.public_subnets[1]]
 
-#   cluster_endpoint_private_access = true
-#   cluster_endpoint_public_access  = true
+  cluster_endpoint_private_access = true
+  cluster_endpoint_public_access  = true
 
-#   # Add to maintain v17 settings to avoid control plane replacement
-#   prefix_separator                   = ""
-#   iam_role_name                      = local.name
-#   cluster_security_group_name        = local.name
-#   cluster_security_group_description = "EKS cluster security group."
+  # Add to maintain v17.x settings to avoid control plane replacement
+  prefix_separator                   = ""
+  iam_role_name                      = local.name
+  cluster_security_group_name        = local.name
+  cluster_security_group_description = "EKS cluster security group."
 
-#   # # Worker groups (using Launch Configurations)
-#   # worker_groups = [
-#   #   {
-#   #     name                          = "worker-group-1"
-#   #     instance_type                 = "t3.small"
-#   #     additional_userdata           = "echo foo bar"
-#   #     asg_desired_capacity          = 2
-#   #     additional_security_group_ids = [aws_security_group.worker_group_mgmt_one.id]
-#   #   },
-#   #   {
-#   #     name                          = "worker-group-2"
-#   #     instance_type                 = "t3.medium"
-#   #     additional_userdata           = "echo foo bar"
-#   #     additional_security_group_ids = [aws_security_group.worker_group_mgmt_two.id]
-#   #     asg_desired_capacity          = 1
-#   #   },
-#   # ]
+  # Add to provide similar level of acces as v17.x
+  node_security_group_additional_rules = {
+    ingress_control_plane = {
+      description = "Node to node all ports/protocols"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 0
+      type        = "ingress"
+      self        = true
+    }
+    ingress_self_all = {
+      description                   = "Control plane to nodes on ephemeral ports"
+      protocol                      = "tcp"
+      from_port                     = 1025
+      to_port                       = 65535
+      type                          = "ingress"
+      source_cluster_security_group = true
+    }
+    egress_all = {
+      description = "Node all egress"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 0
+      type        = "egress"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
 
-#   # Worker groups (using Launch Templates)
-#   self_managed_node_group_defaults = {
-#     vpc_security_group_ids = [aws_security_group.all_worker_mgmt.id]
-#   }
+  # Worker groups (using Launch Templates)
+  self_managed_node_group_defaults = {
+    vpc_security_group_ids = [aws_security_group.all_worker_mgmt.id]
 
-#   self_managed_node_groups = {
-#     spot1 = {
-#       name = "spot-1"
+    # New in v18.x
+    create_security_group = false
+  }
 
-#       use_mixed_instances_policy = true
-#       mixed_instances_policy = {
-#         instances_distribution = {
-#           on_demand_base_capacity                  = 0
-#           on_demand_percentage_above_base_capacity = 0
-#           spot_allocation_strategy                 = "lowest-price"
-#         }
-#         override = [
-#           { instance_type = "m5.large" },
-#           { instance_type = "m5a.large" },
-#           { instance_type = "m5d.large" },
-#           { instance_type = "m5ad.large" },
-#         ]
-#       }
+  self_managed_node_groups = {
+    spot1 = {
+      # Avoid replacement
+      name                            = "migrate-spot-12022050321040370500000001a"
+      use_name_prefix                 = false
+      iam_role_name                   = "migrate2022050321040205500000000e"
+      iam_role_use_name_prefix        = false
+      launch_template_name            = "migrate-spot-120220503210403214100000018"
+      launch_template_use_name_prefix = false
 
-#       max_size           = 5
-#       desired_size       = 5
-#       kubelet_extra_args = "--node-labels=node.kubernetes.io/lifecycle=spot"
-#       # public_ip               = true
-#     }
-#   }
+      use_mixed_instances_policy = true
+      mixed_instances_policy = {
+        instances_distribution = {
+          on_demand_base_capacity                  = 0
+          on_demand_percentage_above_base_capacity = 0
+          spot_allocation_strategy                 = "lowest-price"
+        }
+        override = [
+          { instance_type = "m5.large" },
+          { instance_type = "m5a.large" },
+          { instance_type = "m5d.large" },
+          { instance_type = "m5ad.large" },
+        ]
+      }
 
-#   # Managed Node Groups
-#   eks_managed_node_group_defaults = {
-#     ami_type  = "AL2_x86_64"
-#     disk_size = 50
-#   }
+      max_size           = 5
+      desired_size       = 5
+      kubelet_extra_args = "--node-labels=node.kubernetes.io/lifecycle=spot"
+      # public_ip               = true
+    }
+  }
 
-#   eks_managed_node_groups = {
-#     example = {
-#       # Avoid replacement
-#       name                     = "migrate-example20220503145931528500000018"
-#       use_name_prefix          = false
-#       iam_role_name            = "migrate2022050314593041360000000e"
-#       iam_role_use_name_prefix = false
+  # Managed Node Groups
+  eks_managed_node_group_defaults = {
+    ami_type  = "AL2_x86_64"
+    disk_size = 50
 
-#       min_size     = 1
-#       max_size     = 10
-#       desired_size = 1
+    # New in v18.x
+    create_security_group = false
+  }
 
-#       instance_types = ["t3.large"]
-#       capacity_type  = "SPOT"
-#       labels = {
-#         Environment = "test"
-#         GithubRepo  = "terraform-aws-eks"
-#         GithubOrg   = "terraform-aws-modules"
-#       }
+  eks_managed_node_groups = {
+    example = {
+      # Avoid replacement
+      name                     = "migrate-example20220503210403054100000016"
+      use_name_prefix          = false
+      iam_role_name            = "migrate2022050321040205500000000e"
+      iam_role_use_name_prefix = false
 
-#       tags = {
-#         ExtraTag = "example"
-#       }
+      create_launch_template = false
+      launch_template_name   = ""
 
-#       taints = [
-#         {
-#           key    = "dedicated"
-#           value  = "gpuGroup"
-#           effect = "NO_SCHEDULE"
-#         }
-#       ]
+      min_size     = 1
+      max_size     = 10
+      desired_size = 1
 
-#       update_config = {
-#         max_unavailable_percentage = 50 # or set `max_unavailable`
-#       }
-#     }
-#   }
+      instance_types = ["t3.large"]
+      capacity_type  = "SPOT"
+      labels = {
+        Environment = "test"
+        GithubRepo  = "terraform-aws-eks"
+        GithubOrg   = "terraform-aws-modules"
+      }
 
-#   # Fargate
-#   fargate_profile_defaults = {
-#     subnet_ids = [module.vpc.private_subnets[2]]
-#   }
+      tags = {
+        ExtraTag = "example"
+      }
 
-#   fargate_profiles = {
-#     default = {
-#       name = "default"
+      taints = [
+        {
+          key    = "dedicated"
+          value  = "gpuGroup"
+          effect = "NO_SCHEDULE"
+        }
+      ]
 
-#       selectors = [
-#         {
-#           namespace = "kube-system"
-#           labels = {
-#             k8s-app = "kube-dns"
-#           }
-#         },
-#         {
-#           namespace = "default"
-#         }
-#       ]
+      update_config = {
+        max_unavailable_percentage = 50 # or set `max_unavailable`
+      }
+    }
+  }
 
-#       tags = {
-#         Owner = "test"
-#       }
+  # Fargate
+  fargate_profile_defaults = {
+    subnet_ids = [module.vpc.private_subnets[2]]
+  }
 
-#       timeouts = {
-#         create = "20m"
-#         delete = "20m"
-#       }
-#     }
-#   }
+  fargate_profiles = {
+    default = {
+      name = "default"
 
-#   # AWS Auth (kubernetes_config_map)
-#   manage_aws_auth_configmap = true
-#   aws_auth_roles = [
-#     {
-#       rolearn  = "arn:aws:iam::66666666666:role/role1"
-#       username = "role1"
-#       groups   = ["system:masters"]
-#     },
-#   ]
+      # Avoid replacement
+      iam_role_name            = "migrate-fargate2022050321040205510000000f"
+      iam_role_use_name_prefix = false
 
-#   aws_auth_users = [
-#     {
-#       userarn  = "arn:aws:iam::66666666666:user/user1"
-#       username = "user1"
-#       groups   = ["system:masters"]
-#     },
-#     {
-#       userarn  = "arn:aws:iam::66666666666:user/user2"
-#       username = "user2"
-#       groups   = ["system:masters"]
-#     },
-#   ]
+      selectors = [
+        {
+          namespace = "kube-system"
+          labels = {
+            k8s-app = "kube-dns"
+          }
+        },
+        {
+          namespace = "default"
+        }
+      ]
 
-#   aws_auth_accounts = [
-#     "777777777777",
-#     "888888888888",
-#   ]
+      tags = {
+        Owner = "test"
+      }
 
-#   tags = {
-#     Example    = local.name
-#     GithubRepo = "terraform-aws-eks"
-#     GithubOrg  = "terraform-aws-modules"
-#   }
-# }
+      timeouts = {
+        create = "20m"
+        delete = "20m"
+      }
+    }
+  }
 
-# # ################################################################################
-# # # Disabled creation
-# # ################################################################################
+  # AWS Auth (kubernetes_config_map)
+  create_aws_auth_configmap = true
+  manage_aws_auth_configmap = true
+  aws_auth_roles = [
+    {
+      rolearn  = "arn:aws:iam::66666666666:role/role1"
+      username = "role1"
+      groups   = ["system:masters"]
+    },
+  ]
 
-# # module "disabled_eks" {
-# #   source = "../.."
+  aws_auth_users = [
+    {
+      userarn  = "arn:aws:iam::66666666666:user/user1"
+      username = "user1"
+      groups   = ["system:masters"]
+    },
+    {
+      userarn  = "arn:aws:iam::66666666666:user/user2"
+      username = "user2"
+      groups   = ["system:masters"]
+    },
+  ]
 
-# #   create_eks = false
-# # }
+  aws_auth_accounts = [
+    "777777777777",
+    "888888888888",
+  ]
 
-# # module "disabled_fargate" {
-# #   source = "../../modules/fargate"
+  tags = {
+    Example    = local.name
+    GithubRepo = "terraform-aws-eks"
+    GithubOrg  = "terraform-aws-modules"
+  }
+}
 
-# #   create_fargate_pod_execution_role = false
-# # }
+################################################################################
+# Additional security groups for workers
+################################################################################
 
-# # module "disabled_node_groups" {
-# #   source = "../../modules/node_groups"
+resource "aws_security_group" "worker_group_mgmt_one" {
+  name_prefix = "worker_group_mgmt_one"
+  vpc_id      = module.vpc.vpc_id
 
-# #   create_eks = false
-# # }
+  ingress {
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
 
-# ################################################################################
-# # Additional security groups for workers
-# ################################################################################
+    cidr_blocks = [
+      "10.0.0.0/8",
+    ]
+  }
+}
 
-# resource "aws_security_group" "worker_group_mgmt_one" {
-#   name_prefix = "worker_group_mgmt_one"
-#   vpc_id      = module.vpc.vpc_id
+resource "aws_security_group" "worker_group_mgmt_two" {
+  name_prefix = "worker_group_mgmt_two"
+  vpc_id      = module.vpc.vpc_id
 
-#   ingress {
-#     from_port = 22
-#     to_port   = 22
-#     protocol  = "tcp"
+  ingress {
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
 
-#     cidr_blocks = [
-#       "10.0.0.0/8",
-#     ]
-#   }
-# }
+    cidr_blocks = [
+      "192.168.0.0/16",
+    ]
+  }
+}
 
-# resource "aws_security_group" "worker_group_mgmt_two" {
-#   name_prefix = "worker_group_mgmt_two"
-#   vpc_id      = module.vpc.vpc_id
+resource "aws_security_group" "all_worker_mgmt" {
+  name_prefix = "all_worker_management"
+  vpc_id      = module.vpc.vpc_id
 
-#   ingress {
-#     from_port = 22
-#     to_port   = 22
-#     protocol  = "tcp"
+  ingress {
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
 
-#     cidr_blocks = [
-#       "192.168.0.0/16",
-#     ]
-#   }
-# }
+    cidr_blocks = [
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+    ]
+  }
+}
 
-# resource "aws_security_group" "all_worker_mgmt" {
-#   name_prefix = "all_worker_management"
-#   vpc_id      = module.vpc.vpc_id
+################################################################################
+# Supporting resources
+################################################################################
 
-#   ingress {
-#     from_port = 22
-#     to_port   = 22
-#     protocol  = "tcp"
+data "aws_availability_zones" "available" {}
 
-#     cidr_blocks = [
-#       "10.0.0.0/8",
-#       "172.16.0.0/12",
-#       "192.168.0.0/16",
-#     ]
-#   }
-# }
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 3.0"
 
-# ################################################################################
-# # Supporting resources
-# ################################################################################
+  name                 = local.name
+  cidr                 = "10.0.0.0/16"
+  azs                  = data.aws_availability_zones.available.names
+  private_subnets      = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets       = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+  enable_nat_gateway   = true
+  single_nat_gateway   = true
+  enable_dns_hostnames = true
 
-# data "aws_availability_zones" "available" {}
+  public_subnet_tags = {
+    "kubernetes.io/cluster/${local.name}" = "shared"
+    "kubernetes.io/role/elb"              = "1"
+  }
 
-# module "vpc" {
-#   source  = "terraform-aws-modules/vpc/aws"
-#   version = "~> 3.0"
+  private_subnet_tags = {
+    "kubernetes.io/cluster/${local.name}" = "shared"
+    "kubernetes.io/role/internal-elb"     = "1"
+  }
 
-#   name                 = local.name
-#   cidr                 = "10.0.0.0/16"
-#   azs                  = data.aws_availability_zones.available.names
-#   private_subnets      = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-#   public_subnets       = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
-#   enable_nat_gateway   = true
-#   single_nat_gateway   = true
-#   enable_dns_hostnames = true
-
-#   public_subnet_tags = {
-#     "kubernetes.io/cluster/${local.name}" = "shared"
-#     "kubernetes.io/role/elb"              = "1"
-#   }
-
-#   private_subnet_tags = {
-#     "kubernetes.io/cluster/${local.name}" = "shared"
-#     "kubernetes.io/role/internal-elb"     = "1"
-#   }
-
-#   tags = {
-#     Example    = local.name
-#     GithubRepo = "terraform-aws-eks"
-#     GithubOrg  = "terraform-aws-modules"
-#   }
-# }
+  tags = {
+    Example    = local.name
+    GithubRepo = "terraform-aws-eks"
+    GithubOrg  = "terraform-aws-modules"
+  }
+}
