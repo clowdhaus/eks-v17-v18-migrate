@@ -25,9 +25,11 @@ terraform state mv 'module.eks.aws_iam_role.cluster[0]' 'module.eks.aws_iam_role
 
 3. Update control plane resources
 
+```
 terraform apply -target 'module.eks.aws_iam_role.this[0]'
 terraform apply -target 'module.eks.aws_eks_cluster.this[0]'
 terraform apply -target 'module.eks.aws_eks_cluster.this[0]' -refresh-only # clean up plan
+```
 
 ## Data Plane Changes
 
