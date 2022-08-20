@@ -7,7 +7,7 @@ provider "kubernetes" {
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
 
   exec {
-    api_version = "client.authentication.k8s.io/v1alpha1"
+    api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
     # This requires the awscli to be installed locally where Terraform is executed
     args = ["eks", "get-token", "--cluster-name", module.eks.cluster_id]
@@ -16,7 +16,7 @@ provider "kubernetes" {
 
 locals {
   name            = "migrate"
-  cluster_version = "1.21"
+  cluster_version = "1.22"
   region          = "us-east-1"
 }
 
@@ -26,7 +26,7 @@ locals {
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "18.20.5"
+  version = "18.28.0"
 
   cluster_name    = local.name
   cluster_version = local.cluster_version
@@ -81,14 +81,6 @@ module "eks" {
 
   self_managed_node_groups = {
     spot1 = {
-      # Avoid replacement
-      name                            = "migrate-spot-12022050321040370500000001a"
-      use_name_prefix                 = false
-      iam_role_name                   = "migrate2022050321040205500000000e"
-      iam_role_use_name_prefix        = false
-      launch_template_name            = "migrate-spot-120220503210403214100000018"
-      launch_template_use_name_prefix = false
-
       use_mixed_instances_policy = true
       mixed_instances_policy = {
         instances_distribution = {
@@ -107,30 +99,17 @@ module "eks" {
       max_size           = 5
       desired_size       = 5
       kubelet_extra_args = "--node-labels=node.kubernetes.io/lifecycle=spot"
-      # public_ip               = true
     }
   }
 
   # Managed Node Groups
   eks_managed_node_group_defaults = {
-    ami_type  = "AL2_x86_64"
-    disk_size = 50
-
     # New in v18.x
     create_security_group = false
   }
 
   eks_managed_node_groups = {
     example = {
-      # Avoid replacement
-      name                     = "migrate-example20220503210403054100000016"
-      use_name_prefix          = false
-      iam_role_name            = "migrate2022050321040205500000000e"
-      iam_role_use_name_prefix = false
-
-      create_launch_template = false
-      launch_template_name   = ""
-
       min_size     = 1
       max_size     = 10
       desired_size = 1
@@ -156,7 +135,7 @@ module "eks" {
       ]
 
       update_config = {
-        max_unavailable_percentage = 50 # or set `max_unavailable`
+        max_unavailable_percentage = 33 # or set `max_unavailable`
       }
     }
   }
@@ -168,12 +147,7 @@ module "eks" {
 
   fargate_profiles = {
     default = {
-      name = "default"
-
-      # Avoid replacement
-      iam_role_name            = "migrate-fargate2022050321040205510000000f"
-      iam_role_use_name_prefix = false
-
+      name = "default2"
       selectors = [
         {
           namespace = "kube-system"
@@ -294,11 +268,13 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 3.0"
 
-  name                 = local.name
-  cidr                 = "10.0.0.0/16"
-  azs                  = data.aws_availability_zones.available.names
-  private_subnets      = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-  public_subnets       = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+  name = local.name
+  cidr = "10.0.0.0/16"
+
+  azs             = slice(data.aws_availability_zones.available.names, 0, 3)
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+
   enable_nat_gateway   = true
   single_nat_gateway   = true
   enable_dns_hostnames = true
